@@ -79,7 +79,17 @@ Linux / macOS 把 `python` 换成 `python3`。
 
 ## 会识别什么
 
-- 项目文件夹和压缩包（zip / tar）：读取 README、`package.json`、`pyproject.toml`、`.git/config` 等
+只登记看起来像工具的内容：
+
+- 项目文件夹
+- 压缩包：`.zip`、`.tar`、`.tar.gz`、`.7z`、`.rar` 等
+- 安装包 / 可执行文件：`.exe`、`.dll`、`.msi`、`.dmg`、`.pkg`、`.app`、`.AppImage`、`.deb`、`.rpm`
+
+`.json`、`.txt`、`.md`、图片、脚本等普通单文件不会写入表格。
+
+识别方式：
+
+- 项目文件夹和压缩包：读取 README、`package.json`、`pyproject.toml`、`.git/config` 等
 - Windows `.exe` / `.dll`：产品名、公司、官网（在 Linux / macOS 上也能读）
 - macOS `.app`：`Info.plist`
 - Linux `.deb`：软件包说明和主页

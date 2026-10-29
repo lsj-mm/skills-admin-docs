@@ -48,9 +48,11 @@ AUTORUN_NAME = "SkillsAdminToolDocs"
 SERVICE_NAME = "skills-admin-tool-docs"
 LAUNCHD_LABEL = "com.skillsadmin.tooldocs"
 INSTALLER_SUFFIXES = (".exe", ".dll", ".msi", ".dmg", ".pkg", ".app", ".appimage", ".deb", ".rpm")
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".7z", ".rar")
+CATALOG_FILE_SUFFIXES = INSTALLER_SUFFIXES + ARCHIVE_SUFFIXES
 PE_KEYS = ("ProductName", "FileDescription", "CompanyName", "Comments", "LegalCopyright")
 
-IGNORED_NAMES = {DOC_NAME, os.path.basename(APP_DIR), "desktop.ini", "Thumbs.db", "__pycache__"}
+IGNORED_NAMES = {DOC_NAME, os.path.basename(APP_DIR), "开源说明.md", "desktop.ini", "Thumbs.db", "__pycache__"}
 IGNORED_SUFFIXES = (".tmp", ".part", ".crdownload", ".download", ".partial", "~")
 README_NAMES = ("readme.md", "readme_zh.md", "readme.zh-cn.md", "readme.rst", "readme.txt", "readme")
 GITHUB_RE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)", re.I)
@@ -531,13 +533,26 @@ def describe(name, use_net):
     return shorten(desc) or PLACEHOLDER, link or PLACEHOLDER
 
 
+def is_ignored_name(name):
+    return name in IGNORED_NAMES or name.startswith((".", "~$")) or name.lower().endswith(IGNORED_SUFFIXES)
+
+
+def is_catalog_file_name(name):
+    """安装包、可执行文件、压缩包才按工具登记；json / txt 等普通文件不算。"""
+    return name.lower().endswith(CATALOG_FILE_SUFFIXES)
+
+
+def is_catalog_item(name):
+    if is_ignored_name(name):
+        return False
+    path = os.path.join(BASE_DIR, name)
+    if os.path.isdir(path):
+        return True
+    return os.path.isfile(path) and is_catalog_file_name(name)
+
+
 def current_items():
-    items = []
-    for name in sorted(os.listdir(BASE_DIR)):
-        if name in IGNORED_NAMES or name.startswith((".", "~$")) or name.lower().endswith(IGNORED_SUFFIXES):
-            continue
-        items.append(name)
-    return items
+    return [name for name in sorted(os.listdir(BASE_DIR)) if is_catalog_item(name)]
 
 
 def update(config):
@@ -551,7 +566,10 @@ def update(config):
         kept = [r for r in rows if r[0] in items]
         for r in rows:
             if r not in kept:
-                log.info(f"[移除] {r[0]}（文件已不在文件夹中）")
+                if os.path.exists(os.path.join(BASE_DIR, r[0])):
+                    log.info(f"[移除] {r[0]}（不是工具文件，已忽略）")
+                else:
+                    log.info(f"[移除] {r[0]}（文件已不在文件夹中）")
         changed = len(kept) != len(rows)
         rows = kept
 
@@ -601,8 +619,15 @@ def wait_until_stable(interval=2):
 
 
 def is_relevant(name):
-    first = name.split("\\", 1)[0]
-    return not (first in IGNORED_NAMES or first.startswith((".", "~$")) or first.lower().endswith(IGNORED_SUFFIXES))
+    first = name.replace("/", "\\").split("\\", 1)[0]
+    if not first or is_ignored_name(first):
+        return False
+    if is_catalog_file_name(first):
+        return True
+    path = os.path.join(BASE_DIR, first)
+    if os.path.isdir(path):
+        return True
+    return (not os.path.exists(path)) and ("." not in first)
 
 
 def directory_events():
