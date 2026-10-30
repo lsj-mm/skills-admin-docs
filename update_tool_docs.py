@@ -52,7 +52,7 @@ ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".
 CATALOG_FILE_SUFFIXES = INSTALLER_SUFFIXES + ARCHIVE_SUFFIXES
 PE_KEYS = ("ProductName", "FileDescription", "CompanyName", "Comments", "LegalCopyright")
 
-IGNORED_NAMES = {DOC_NAME, os.path.basename(APP_DIR), "开源说明.md", "desktop.ini", "Thumbs.db", "__pycache__"}
+IGNORED_NAMES = {DOC_NAME, os.path.basename(APP_DIR), "上传GitHub流程.md", "desktop.ini", "Thumbs.db", "__pycache__"}
 IGNORED_SUFFIXES = (".tmp", ".part", ".crdownload", ".download", ".partial", "~")
 README_NAMES = ("readme.md", "readme_zh.md", "readme.zh-cn.md", "readme.rst", "readme.txt", "readme")
 GITHUB_RE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)", re.I)
@@ -92,6 +92,8 @@ def load_config():
             config.update(json.load(f))
     except (OSError, ValueError) as e:
         log.warning(f"[警告] 配置文件读取失败，使用默认配置: {e}")
+    config["baidu_appid"] = str(config.get("baidu_appid") or "").strip()
+    config["baidu_key"] = str(config.get("baidu_key") or "").strip()
     return config
 
 
@@ -156,6 +158,8 @@ def save_doc(before, rows, after):
 # ---------------------------------------------------------------- 信息提取
 
 def clean_text(text):
+    import html
+    text = html.unescape(text)
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
@@ -216,8 +220,15 @@ def readme_title_desc(text):
     return clean_text(m.group(1)) if m else ""
 
 
+def repo_name_hint(name_hint):
+    hint = os.path.splitext(name_hint)[0].lower()
+    hint = re.sub(r"\.tar$", "", hint)
+    return re.sub(r"[-_](main|master)$", "", hint)
+
+
 def find_github_link(texts, name_hint):
-    hint = re.sub(r"[-_](main|master)$", "", name_hint.lower())
+    """只采用仓库名与文件名一致的 GitHub 链接，避免把 README 里推广的其他项目当成本工具地址。"""
+    hint = repo_name_hint(name_hint)
     for text in texts:
         for owner, repo in GITHUB_RE.findall(text or ""):
             repo = re.sub(r"\.git$", "", repo)
@@ -228,7 +239,51 @@ def find_github_link(texts, name_hint):
     return ""
 
 
-def info_from_project_files(files, name_hint):
+def github_repo_url(owner, repo):
+    try:
+        data = json.loads(http_get(f"https://api.github.com/repos/{owner}/{repo}"))
+        return data.get("html_url") or f"https://github.com/{data['owner']['login']}/{data['name']}"
+    except Exception:
+        return ""
+
+
+def github_search_by_name(hint):
+    import urllib.parse
+    try:
+        data = json.loads(http_get(
+            "https://api.github.com/search/repositories?per_page=5&q=" + urllib.parse.quote(f"{hint} in:name")
+        ))
+    except Exception:
+        return ""
+    for item in data.get("items") or []:
+        if item.get("name", "").lower() == hint.lower():
+            return item.get("html_url") or ""
+    return ""
+
+
+def resolve_github_link(name_hint, texts, use_net):
+    exact = find_github_link(texts, name_hint)
+    if exact:
+        return exact
+    if not use_net:
+        return ""
+    hint = repo_name_hint(name_hint)
+    if not hint:
+        return ""
+    seen = set()
+    for text in texts:
+        for owner, _repo in GITHUB_RE.findall(text or ""):
+            key = owner.lower()
+            if key in seen or key in ("sponsors", "orgs", "topics", "features", "apps", "marketplace"):
+                continue
+            seen.add(key)
+            url = github_repo_url(owner, hint)
+            if url:
+                return url
+    return github_search_by_name(hint)
+
+
+def info_from_project_files(files, name_hint, use_net=False):
     """files: {相对路径(小写): 内容}，只含项目根目录下的文件。"""
     desc, link = "", ""
 
@@ -260,9 +315,10 @@ def info_from_project_files(files, name_hint):
         link = f"https://github.com/{m.group(1)}/{re.sub(r'.git$', '', m.group(2))}"
 
     readme = next((files[n] for n in README_NAMES if n in files), "")
+    texts = ([readme] if readme else []) + list(files.values())
     if readme:
         desc = desc or readme_summary(readme) or readme_title_desc(readme)
-        link = link or find_github_link([readme] + list(files.values()), name_hint)
+    link = link or resolve_github_link(name_hint, texts, use_net)
 
     return desc, link
 
@@ -467,12 +523,26 @@ def baidu_ready(config):
 
 def translate_baidu(text, appid, key):
     import urllib.parse
+    import urllib.request
     salt = str(random.randint(10000, 99999))
     sign = hashlib.md5((appid + text + salt + key).encode("utf-8")).hexdigest()
-    query = urllib.parse.urlencode({"q": text, "from": "auto", "to": "zh", "appid": appid, "salt": salt, "sign": sign})
-    data = json.loads(http_get("https://fanyi-api.baidu.com/api/trans/vip/translate?" + query))
-    if "error_code" in data:
-        raise RuntimeError(f"百度翻译错误 {data['error_code']}: {data.get('error_msg', '')}")
+    body = urllib.parse.urlencode({
+        "q": text, "from": "auto", "to": "zh", "appid": appid, "salt": salt, "sign": sign,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://fanyi-api.baidu.com/api/trans/vip/translate",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0 tool-docs-updater"},
+    )
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        data = json.loads(resp.read().decode("utf-8", "ignore"))
+    code = str(data.get("error_code", ""))
+    if code:
+        if code == "54001":
+            raise RuntimeError("百度翻译签名错误：请到开放平台核对应用ID和密钥是否复制完整、没有多空格")
+        if code == "52003":
+            raise RuntimeError("百度翻译未授权：请确认已开通通用文本翻译，且 APPID 填的是应用ID")
+        raise RuntimeError(f"百度翻译错误 {code}: {data.get('error_msg', '')}")
     return "".join(item["dst"] for item in data["trans_result"])
 
 
@@ -505,9 +575,9 @@ def describe(name, use_net):
 
     lower = name.lower()
     if os.path.isdir(path) and not lower.endswith(".app"):
-        desc, link = info_from_project_files(read_dir_root_files(path), name)
+        desc, link = info_from_project_files(read_dir_root_files(path), name, use_net)
     elif lower.endswith((".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")):
-        desc, link = info_from_project_files(read_archive_root_files(path), re.sub(r"\.tar$", "", stem))
+        desc, link = info_from_project_files(read_archive_root_files(path), re.sub(r"\.tar$", "", stem), use_net)
     elif lower.endswith(INSTALLER_SUFFIXES):
         if lower.endswith((".exe", ".dll")):
             info = exe_version_info(path)
@@ -580,6 +650,21 @@ def update(config):
         rows.append([name, desc, link])
         changed = True
         log.info(f"[新增] {name} | {desc} | {link}")
+
+    for row in rows:
+        need_desc = row[1] in ("", PLACEHOLDER)
+        need_link = row[2] in ("", PLACEHOLDER)
+        if not (need_desc or need_link):
+            continue
+        desc, link = describe(row[0], use_net)
+        if need_desc and desc != PLACEHOLDER:
+            row[1] = desc
+            changed = True
+            log.info(f"[补说明] {row[0]} | {desc}")
+        if need_link and link != PLACEHOLDER:
+            row[2] = link
+            changed = True
+            log.info(f"[补链接] {row[0]} | {link}")
 
     if use_net and config["translate"] and baidu_ready(config):
         for row in rows:

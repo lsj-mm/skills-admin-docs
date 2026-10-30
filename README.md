@@ -75,7 +75,7 @@ Linux / macOS 把 `python` 换成 `python3`。
 | `baidu_appid` / `baidu_key` | 百度翻译开放平台的 APPID 和密钥。都填了才会翻译；不填则保留原文 |
 | `remove_missing` | 文件从文件夹消失后，是否删除表格中对应行 |
 
-翻译请使用[百度翻译开放平台](https://fanyi-api.baidu.com/)的通用文本翻译。不要把填好密钥的 `config.json` 提交到 Git 或发给别人。
+翻译请使用[百度翻译开放平台](https://fanyi-api.baidu.com/)的通用文本翻译。`baidu_appid` 填应用 ID，`baidu_key` 填密钥，不要有多余空格。签名错误（54001）通常是这两项与控制台不一致。不要把填好密钥的 `config.json` 提交到 Git 或发给别人。
 
 ## 会识别什么
 
@@ -95,7 +95,9 @@ Linux / macOS 把 `python` 换成 `python3`。
 - Linux `.deb`：软件包说明和主页
 - `.dmg`、`.AppImage`、`.rpm`、`.pkg`：根据文件名猜测，并尝试搜索官网
 
-识别不出时对应格会填「待补充」。
+识别不出时对应格会填「待补充」。已有行里的「待补充」在之后能识别到时会自动补上，手写过的说明和链接不会被覆盖。
+
+README 里推广其他项目的 GitHub 链接不会当成当前工具的地址。若压缩包名与某个仓库名一致，会结合 README 中出现过的组织名，或用 GitHub 搜索补全链接。
 
 ## 行为说明
 
